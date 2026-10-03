@@ -1,5 +1,4 @@
 import gspread
-from oauth2client.service_account import ServiceAccountCredentials
 import pandas as pd
 import requests
 import zipfile
@@ -7,20 +6,18 @@ import io
 from datetime import datetime, timedelta
 import os
 import json
-from datetime import date
 
-# 1. Credentials Setup
-creds_json = os.environ.get('GCP_CREDENTIALS')
-if not creds_json:
-    raise RuntimeError("GCP_CREDENTIALS is not set")
-creds_dict = json.loads(creds_json)
-scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-client = gspread.authorize(creds)
+# 1. Sheet Setup
+# The middle value in the Google Sheet URL (not the tab).
+SPREADSHEET_ID = "1mOVPxjgc1w0j2WPG_Xp4t8SKl_eb2-wHCWfdAiO145Q"
+WORKSHEET_NAME = "Top 250 Stocks"
 
-# replace with the middle value in the URL of the google google sheet where you want to updat. It is not the tab.
-spreadsheet_id = "1mOVPxjgc1w0j2WPG_Xp4t8SKl_eb2-wHCWfdAiO145Q" 
-worksheet = client.open_by_key(spreadsheet_id).worksheet("Top 250 Stocks")
+def get_worksheet():
+    creds_json = os.environ.get('GCP_CREDENTIALS')
+    if not creds_json:
+        raise RuntimeError("GCP_CREDENTIALS is not set")
+    client = gspread.service_account_from_dict(json.loads(creds_json))
+    return client.open_by_key(SPREADSHEET_ID).worksheet(WORKSHEET_NAME)
 
 # 2. NSE UDiFF Data Fetcher
 def fetch_bhavcopy_for_date(date_obj):
@@ -129,46 +126,45 @@ def upsert_rows(worksheet, data_to_insert, key_col='A', start_col='B', extra_upd
         worksheet.batch_update(batch_data, value_input_option='USER_ENTERED')
 
 
-# usage
-#data_to_insert = fetch_bhavcopy_for_date(test_date)  # [[symbol, open, high, low, close, volume], ...]
-#upsert_rows(worksheet, data_to_insert, key_col='A', start_col='B')
-        
 # 3. Execution Logic
-#today = datetime.now()
-run_date_str = os.environ.get('RUN_DATE', '').strip()
-if run_date_str:
-    try:
-        today = datetime.strptime(run_date_str, '%Y-%m-%d')
-    except ValueError:
-        print(f"WARNING: RUN_DATE='{run_date_str}' is not in YYYY-MM-DD format, falling back to today.")
+def main():
+    worksheet = get_worksheet()
+
+    run_date_str = os.environ.get('RUN_DATE', '').strip()
+    if run_date_str:
+        try:
+            today = datetime.strptime(run_date_str, '%Y-%m-%d')
+        except ValueError:
+            print(f"WARNING: RUN_DATE='{run_date_str}' is not in YYYY-MM-DD format, falling back to today.")
+            today = datetime.now()
+    else:
         today = datetime.now()
-else:
-    today = datetime.now()
-data_to_insert = None
-fetched_date_str = ""
+    data_to_insert = None
+    fetched_date_str = ""
 
-for i in range(5): 
-#    test_date = date(2026, 9, 30)
-    test_date = today - timedelta(days=i)
-    if test_date.weekday() >= 5: continue
+    for i in range(5):
+        test_date = today - timedelta(days=i)
+        if test_date.weekday() >= 5: continue
 
-    data_to_insert = fetch_bhavcopy_for_date(test_date)
-    if not data_to_insert:
-        continue
-    start_col = start_col_for_date(test_date)
-    print("Start Column: ", start_col)
-    header_updates = day_header_updates(start_col, test_date)
-    upsert_rows(worksheet, data_to_insert, key_col='A', start_col=start_col, extra_updates=header_updates)
-    fetched_date_str = test_date.strftime('%d-%b-%Y')
-    if data_to_insert:
+        data_to_insert = fetch_bhavcopy_for_date(test_date)
+        if not data_to_insert:
+            continue
+        start_col = start_col_for_date(test_date)
+        print("Start Column: ", start_col)
+        header_updates = day_header_updates(start_col, test_date)
+        upsert_rows(worksheet, data_to_insert, key_col='A', start_col=start_col, extra_updates=header_updates)
         fetched_date_str = test_date.strftime('%d-%b-%Y')
-        break
+        if data_to_insert:
+            fetched_date_str = test_date.strftime('%d-%b-%Y')
+            break
 
-# 4. Update Sheet
-if data_to_insert:
-    #worksheet.batch_clear(['A2:G251'])
-    #worksheet.update('A2', data_to_insert)
-    ist_now = (datetime.utcnow() + timedelta(hours=5, minutes=30)).strftime('%d-%b %H:%M')
-    status_msg = f"Data Date: {fetched_date_str} | Last Update: {ist_now} (IST)"
-    worksheet.update('A1', [[status_msg]])
-    print("SUCCESS: Sheet Updated!")
+    # 4. Update Sheet
+    if data_to_insert:
+        ist_now = (datetime.utcnow() + timedelta(hours=5, minutes=30)).strftime('%d-%b %H:%M')
+        status_msg = f"Data Date: {fetched_date_str} | Last Update: {ist_now} (IST)"
+        worksheet.update('A1', [[status_msg]])
+        print("SUCCESS: Sheet Updated!")
+
+
+if __name__ == "__main__":
+    main()
