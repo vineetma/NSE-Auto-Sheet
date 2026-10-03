@@ -39,6 +39,9 @@ def fetch_bhavcopy_for_date(date_obj):
                     
                     sym_col = 'TckrSymb' if 'TckrSymb' in df.columns else 'SYMBOL'
                     close_col = 'ClsPric' if 'ClsPric' in df.columns else 'CLOSE'
+                    open_col = 'OpnPric' if 'OpnPric' in df.columns else 'OPEN'
+                    low_col = 'LwPric' if 'LwPric' in df.columns else 'LOW'
+                    high_col = 'HghPric' if 'HighPric' in df.columns else 'HIGH'
                     series_col = 'SctySrs' if 'SctySrs' in df.columns else 'SERIES'
                     
                     vol_col = 'TtlTradgVol'
@@ -54,7 +57,7 @@ def fetch_bhavcopy_for_date(date_obj):
                     df = df[~df[sym_col].astype(str).str.contains(filter_keywords, case=False, na=False)]
                     
                     df_top = df.sort_values(by=vol_col, ascending=False).head(250)
-                    return df_top[[sym_col, vol_col, close_col]].values.tolist()
+                    return df_top[[sym_col, vol_col, open_col, close_col, low_col, high_col]].values.tolist()
         return None
     except:
         return None
@@ -75,7 +78,7 @@ for i in range(5):
 
 # 4. Update Sheet
 if data_to_insert:
-    worksheet.batch_clear(['A2:C251'])
+    worksheet.batch_clear(['A2:G251'])
     worksheet.update('A2', data_to_insert)
     ist_now = (datetime.utcnow() + timedelta(hours=5, minutes=30)).strftime('%d-%b %H:%M')
     status_msg = f"Data Date: {fetched_date_str} | Last Update: {ist_now} (IST)"
