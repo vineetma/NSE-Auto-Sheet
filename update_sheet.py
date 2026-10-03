@@ -41,7 +41,7 @@ def fetch_bhavcopy_for_date(date_obj):
                     close_col = 'ClsPric' if 'ClsPric' in df.columns else 'CLOSE'
                     open_col = 'OpnPric' if 'OpnPric' in df.columns else 'OPEN'
                     low_col = 'LwPric' if 'LwPric' in df.columns else 'LOW'
-                    high_col = 'HghPric' if 'HighPric' in df.columns else 'HIGH'
+                    high_col = 'HghPric' if 'HghPric' in df.columns else 'HIGH'
                     series_col = 'SctySrs' if 'SctySrs' in df.columns else 'SERIES'
                     
                     vol_col = 'TtlTradgVol'
