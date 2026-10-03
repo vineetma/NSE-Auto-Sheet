@@ -157,7 +157,7 @@ for i in range(5):
         continue
     start_col = start_col_for_date(test_date)
     header_updates = day_header_updates(start_col, test_date)
-    upsert_rows(worksheet, data_to_insert, key_col='A', start_col=start_col)
+    upsert_rows(worksheet, data_to_insert, key_col='A', start_col=start_col, extra_updates=header_update)
     fetched_date_str = test_date.strftime('%d-%b-%Y')
     if data_to_insert:
         fetched_date_str = test_date.strftime('%d-%b-%Y')
