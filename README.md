@@ -2,6 +2,22 @@
 
 Fetches the NSE bhavcopy, picks the top 250 stocks by volume, and writes them into the weekday column block of a Google Sheet. Runs on a schedule in GitHub Actions (`.github/workflows/main.yml`) and can also be run locally.
 
+## How it works
+
+`update_sheet.py`'s `main()` runs four steps:
+
+1. Open the worksheet with the service account key in `GCP_CREDENTIALS` (a bad key fails before any NSE call).
+2. Take the run date from `RUN_DATE`, or today.
+3. Find the latest trading day up to that date (skipping weekends and holidays) and pick its top 250 stocks by volume.
+4. Write them into that weekday's column block, with the block headers and the status cell in `A1`, in one batch.
+
+The code is in four files:
+
+- `update_sheet.py`: the entry point. Reads the environment, runs the steps, logs, and sets the exit code.
+- `config.py`: every tunable value (target sheet, NSE URL, top-N, stock filter, sheet layout).
+- `nse.py`: downloads and parses the bhavcopy and selects the top stocks.
+- `sheet.py`: works out where each day's rows go in the sheet and writes them.
+
 ## Running locally
 
 From PowerShell in the repo root:
