@@ -8,6 +8,7 @@ import os
 import json
 import logging
 import sys
+from gspread.utils import rowcol_to_a1
 
 logger = logging.getLogger("update_sheet")
 
@@ -42,8 +43,14 @@ OPTIONAL_COLUMNS = {'series'}
 EQUITY_SERIES = 'EQ'
 EXCLUDE_SYMBOL_KEYWORDS = ['BEES', 'ETF', 'GOLD', 'LIQUID', 'CASE', 'SILVER', 'LIQ']
 
-# Values written per stock: column A holds the symbol, the rest go into the day's block.
+# Sheet layout. Row 1 holds the status cell and each day's name/date, row 2 the column headers.
+# Column A holds the symbol (SHEET_COLUMNS[0]); each weekday has a block, Monday's starting at
+# column B, holding the remaining SHEET_COLUMNS followed by the sheet's own "Signal" column.
 SHEET_COLUMNS = ['symbol', 'volume', 'open', 'close', 'low', 'high']
+KEY_COL = 1                                  # A
+FIRST_BLOCK_COL = 2                          # B
+DAY_BLOCK_WIDTH = len(SHEET_COLUMNS[1:]) + 1  # values + "Signal" = 6
+STATUS_CELL = 'A1'
 
 def get_worksheet():
     creds_json = os.environ.get('GCP_CREDENTIALS')
@@ -143,47 +150,34 @@ def find_latest_trading_day(today):
         return day, top[SHEET_COLUMNS].values.tolist()
     raise FetchError(f"No bhavcopy found in the {LOOKBACK_DAYS} days up to {today.strftime('%d-%b-%Y')}")
 
-def col_num_to_letter(n):
-    """1 -> A, 2 -> B, ... 27 -> AA, etc."""
-    letters = ''
-    while n > 0:
-        n, remainder = divmod(n - 1, 26)
-        letters = chr(65 + remainder) + letters
-    return letters
-    
+# 3. Sheet Writer
 def start_col_for_date(d):
-    """Monday=1 ... Sunday=7, matching your (wkday-1)*6+2 formula."""
-    weekday = d.isoweekday()  # Mon=1, ..., Sun=7
-    col_idx = (weekday - 1) * 6 + 2
-    return col_num_to_letter(col_idx)
+    """Column number of d's block: Monday -> 2 (B), Tuesday -> 8 (H), ... Thursday -> 20 (T)."""
+    return FIRST_BLOCK_COL + (d.isoweekday() - 1) * DAY_BLOCK_WIDTH
+
+def col_letter(col):
+    return rowcol_to_a1(1, col)[:-1]
 
 def day_header_updates(start_col, d):
-    col_idx = gspread.utils.a1_to_rowcol(f"{start_col}1")[1]
-    next_col = col_num_to_letter(col_idx + 1)
     return [
-        {'range': f"{start_col}1", 'values': [[d.strftime('%A')]]},        # e.g. "Wednesday"
-        {'range': f"{next_col}1", 'values': [[d.strftime('%d-%b-%Y')]]},   # e.g. "30-Sep-2026"
+        {'range': rowcol_to_a1(1, start_col), 'values': [[d.strftime('%A')]]},          # e.g. "Wednesday"
+        {'range': rowcol_to_a1(1, start_col + 1), 'values': [[d.strftime('%d-%b-%Y')]]},  # e.g. "30-Sep-2026"
     ]
-    
-def upsert_rows(worksheet, data_to_insert, key_col='A', start_col='B', extra_updates=None):
-    """
-    data_to_insert: list of rows, each row = [key, value1, value2, ...]
-                    (key = the symbol/date/whatever goes in key_col;
-                     value1, value2, ... are what gets pasted starting at start_col)
-    key_col:   column holding the match key (default 'A')
-    start_col: column where the non-key values start being pasted (default 'B')
-    extra_updates: optional list of {'range': ..., 'values': [[...]]} dicts
-                   to fold into the same batch_update call (e.g. header row cells).
-    """
-    key_col_idx = gspread.utils.a1_to_rowcol(f"{key_col}1")[1]
 
+def upsert_rows(worksheet, rows, start_col, extra_updates=()):
+    """Write rows into the block at start_col, plus extra_updates, in a single batch_update.
+
+    rows: each row = [key, value1, value2, ...]; the key is matched against column KEY_COL
+          (new keys are appended below the last row) and the values are pasted from start_col.
+    extra_updates: {'range': ..., 'values': [[...]]} dicts to include, e.g. header and status cells.
+    """
     # one read: existing keys from row 2 down
-    existing_keys = worksheet.col_values(key_col_idx)[1:]
+    existing_keys = worksheet.col_values(KEY_COL)[1:]
     key_to_row = {str(k).strip(): i + 2 for i, k in enumerate(existing_keys) if str(k).strip()}
     next_new_row = len(existing_keys) + 2
 
-    batch_data = list(extra_updates) if extra_updates else []
-    for row in data_to_insert:
+    batch_data = list(extra_updates)
+    for row in rows:
         key, *values = row
         key = str(key).strip()
 
@@ -193,16 +187,16 @@ def upsert_rows(worksheet, data_to_insert, key_col='A', start_col='B', extra_upd
             target_row = next_new_row
             key_to_row[key] = target_row
             next_new_row += 1
-            # new row — write the key into column A ourselves
-            batch_data.append({'range': f"{key_col}{target_row}", 'values': [[key]]})
+            # new row: write the key into the key column ourselves
+            batch_data.append({'range': rowcol_to_a1(target_row, KEY_COL), 'values': [[key]]})
 
-        batch_data.append({'range': f"{start_col}{target_row}", 'values': [values]})
+        batch_data.append({'range': rowcol_to_a1(target_row, start_col), 'values': [values]})
 
     if batch_data:
         worksheet.batch_update(batch_data, value_input_option='USER_ENTERED')
 
 
-# 3. Execution Logic
+# 4. Execution Logic
 def main():
     worksheet = get_worksheet()
 
@@ -212,15 +206,12 @@ def main():
     data_date, rows = find_latest_trading_day(today)
     start_col = start_col_for_date(data_date)
     logger.info("Fetched %d rows for %s; start column: %s",
-                len(rows), data_date.strftime('%d-%b-%Y'), start_col)
-
-    # 4. Update Sheet
-    header_updates = day_header_updates(start_col, data_date)
-    upsert_rows(worksheet, rows, key_col='A', start_col=start_col, extra_updates=header_updates)
+                len(rows), data_date.strftime('%d-%b-%Y'), col_letter(start_col))
 
     ist_now = (datetime.utcnow() + timedelta(hours=5, minutes=30)).strftime('%d-%b %H:%M')
     status_msg = f"Data Date: {data_date.strftime('%d-%b-%Y')} | Last Update: {ist_now} (IST)"
-    worksheet.update('A1', [[status_msg]])
+    status_update = {'range': STATUS_CELL, 'values': [[status_msg]]}
+    upsert_rows(worksheet, rows, start_col, extra_updates=day_header_updates(start_col, data_date) + [status_update])
     logger.info("SUCCESS: Sheet Updated! (%s)", status_msg)
 
 
