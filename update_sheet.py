@@ -169,5 +169,5 @@ if data_to_insert:
     #worksheet.update('A2', data_to_insert)
     ist_now = (datetime.utcnow() + timedelta(hours=5, minutes=30)).strftime('%d-%b %H:%M')
     status_msg = f"Data Date: {fetched_date_str} | Last Update: {ist_now} (IST)"
-    worksheet.update('K2', [[status_msg]])
+    worksheet.update('A1', [[status_msg]])
     print("SUCCESS: Sheet Updated!")
