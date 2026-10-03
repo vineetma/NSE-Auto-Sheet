@@ -27,22 +27,33 @@ def get_worksheet():
 class FetchError(RuntimeError):
     """The bhavcopy could not be downloaded or parsed (not a holiday)."""
 
-def fetch_bhavcopy_for_date(date_obj):
-    """Return the top-250 rows for date_obj, or None if NSE has no file (holiday / not yet published).
+NSE_URL = "https://nsearchives.nseindia.com/content/cm/BhavCopy_NSE_CM_0_0_0_{date:%Y%m%d}_F_0000.csv.zip"
+NSE_HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+}
 
-    Raises FetchError on network errors, unexpected HTTP status, or a malformed file,
+# Canonical column name -> bhavcopy column names, UDiFF format first, then the old format.
+COLUMN_ALIASES = {
+    'symbol': ['TckrSymb', 'SYMBOL'],
+    'series': ['SctySrs', 'SERIES'],
+    'volume': ['TtlTradgVol', 'TtlTrdQty', 'TotTrdQty', 'TOTTRDQTY'],
+    'open': ['OpnPric', 'OPEN'],
+    'close': ['ClsPric', 'CLOSE'],
+    'low': ['LwPric', 'LOW'],
+    'high': ['HghPric', 'HIGH'],
+}
+OPTIONAL_COLUMNS = {'series'}
+
+def download_bhavcopy(date_obj):
+    """Return the bhavcopy zip bytes for date_obj, or None if NSE has no file (holiday / not yet published).
+
+    Raises FetchError on network errors or an unexpected HTTP status,
     so a real failure is never mistaken for a holiday.
     """
-    date_str = date_obj.strftime("%Y%m%d")
-    url = f"https://nsearchives.nseindia.com/content/cm/BhavCopy_NSE_CM_0_0_0_{date_str}_F_0000.csv.zip"
-    
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
-    }
-    
+    url = NSE_URL.format(date=date_obj)
     try:
-        response = requests.get(url, headers=headers, timeout=15)
+        response = requests.get(url, headers=NSE_HEADERS, timeout=15)
     except requests.RequestException as e:
         raise FetchError(f"Network error fetching {url}: {e}") from e
 
@@ -51,43 +62,57 @@ def fetch_bhavcopy_for_date(date_obj):
         return None
     if response.status_code != 200:
         raise FetchError(f"Unexpected HTTP {response.status_code} fetching {url}")
+    return response.content
 
+def resolve_columns(columns):
+    """Map each canonical name in COLUMN_ALIASES to the first alias present in columns.
+
+    Optional columns that are absent are left out; any other missing column raises FetchError.
+    """
+    resolved, missing = {}, []
+    for name, aliases in COLUMN_ALIASES.items():
+        found = next((a for a in aliases if a in columns), None)
+        if found:
+            resolved[name] = found
+        elif name not in OPTIONAL_COLUMNS:
+            missing.append(f"{name} ({'/'.join(aliases)})")
+    if missing:
+        raise FetchError(f"Bhavcopy is missing columns {missing}; got {list(columns)}")
+    return resolved
+
+def parse_bhavcopy(content):
+    """Read the CSV inside the bhavcopy zip into a DataFrame with canonical column names only."""
     try:
-        with zipfile.ZipFile(io.BytesIO(response.content)) as z:
-            csv_filename = z.namelist()[0]
-            with z.open(csv_filename) as f:
+        with zipfile.ZipFile(io.BytesIO(content)) as z:
+            with z.open(z.namelist()[0]) as f:
                 df = pd.read_csv(f)
     except Exception as e:
-        raise FetchError(f"Could not read bhavcopy zip/CSV from {url}: {e}") from e
+        raise FetchError(f"Could not read bhavcopy zip/CSV: {e}") from e
 
-    sym_col = 'TckrSymb' if 'TckrSymb' in df.columns else 'SYMBOL'
-    close_col = 'ClsPric' if 'ClsPric' in df.columns else 'CLOSE'
-    open_col = 'OpnPric' if 'OpnPric' in df.columns else 'OPEN'
-    low_col = 'LwPric' if 'LwPric' in df.columns else 'LOW'
-    high_col = 'HghPric' if 'HghPric' in df.columns else 'HIGH'
-    series_col = 'SctySrs' if 'SctySrs' in df.columns else 'SERIES'
-    
-    vol_col = 'TtlTradgVol'
-    for c in ['TtlTradgVol', 'TtlTrdQty', 'TotTrdQty', 'TOTTRDQTY']:
-        if c in df.columns:
-            vol_col = c
-            break
+    columns = resolve_columns(df.columns)
+    return df[list(columns.values())].rename(columns={v: k for k, v in columns.items()})
 
-    required = [sym_col, vol_col, open_col, close_col, low_col, high_col]
-    missing = [c for c in required if c not in df.columns]
-    if missing:
-        raise FetchError(f"Bhavcopy for {date_str} is missing columns {missing}; got {list(df.columns)}")
-    
-    # सिर्फ EQ सीरीज और ETFs (LIQUID/BEES) को बाहर करना
-    if series_col in df.columns:
-        df = df[df[series_col].astype(str).str.strip() == 'EQ']
+def select_top_liquid(df, n):
+    """Keep EQ-series stocks (no ETFs/funds) and return the n with the highest volume."""
+    if 'series' in df.columns:
+        df = df[df['series'].astype(str).str.strip() == 'EQ']
     filter_keywords = 'BEES|ETF|GOLD|LIQUID|CASE|SILVER|LIQ'
-    df = df[~df[sym_col].astype(str).str.contains(filter_keywords, case=False, na=False)]
-    
-    df_top = df.sort_values(by=vol_col, ascending=False).head(250)
+    df = df[~df['symbol'].astype(str).str.contains(filter_keywords, case=False, na=False)]
+    return df.sort_values(by='volume', ascending=False).head(n)
+
+def fetch_bhavcopy_for_date(date_obj):
+    """Return the top-250 rows for date_obj, or None if NSE has no file (holiday / not yet published)."""
+    content = download_bhavcopy(date_obj)
+    if content is None:
+        return None
+    date_str = date_obj.strftime('%d-%b-%Y')
+    try:
+        df_top = select_top_liquid(parse_bhavcopy(content), 250)
+    except FetchError as e:
+        raise FetchError(f"Bhavcopy for {date_str}: {e}") from e
     if df_top.empty:
         raise FetchError(f"Bhavcopy for {date_str} has no EQ rows after filtering")
-    return df_top[required].values.tolist()
+    return df_top[['symbol', 'volume', 'open', 'close', 'low', 'high']].values.tolist()
 
 def col_num_to_letter(n):
     """1 -> A, 2 -> B, ... 27 -> AA, etc."""
