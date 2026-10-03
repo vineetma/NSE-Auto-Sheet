@@ -124,19 +124,21 @@ def upsert_rows(worksheet, data_to_insert, key_col='A', start_col='B'):
 #upsert_rows(worksheet, data_to_insert, key_col='A', start_col='B')
         
 # 3. Execution Logic
-date = datetime.now()
+today = datetime.now()
 data_to_insert = None
 fetched_date_str = ""
 
 for i in range(5): 
-    test_date = date - timedelta(days=i)
+    test_date = date(2026, 9, 30)
+    #test_date = today - timedelta(days=i)
     if test_date.weekday() >= 5: continue
 
-    test_date = date(2026, 9, 30)
     data_to_insert = fetch_bhavcopy_for_date(test_date)
+    if not data_to_insert:
+        continue
     start_col = start_col_for_date(test_date)
     upsert_rows(worksheet, data_to_insert, key_col='A', start_col=start_col)
-    
+    fetched_date_str = test_date.strftime('%d-%b-%Y')
     if data_to_insert:
         fetched_date_str = test_date.strftime('%d-%b-%Y')
         break
