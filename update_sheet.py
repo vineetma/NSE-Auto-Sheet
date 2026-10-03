@@ -156,6 +156,7 @@ for i in range(5):
     if not data_to_insert:
         continue
     start_col = start_col_for_date(test_date)
+    print("Start Column: ", start_col)
     header_updates = day_header_updates(start_col, test_date)
     upsert_rows(worksheet, data_to_insert, key_col='A', start_col=start_col, extra_updates=header_updates)
     fetched_date_str = test_date.strftime('%d-%b-%Y')
