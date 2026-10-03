@@ -2,6 +2,7 @@
 import io
 import logging
 import zipfile
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
@@ -22,14 +23,14 @@ class FetchError(RuntimeError):
 class TradingDay:
     """A trading day and its top stocks, each row in SHEET_COLUMNS order."""
     date: datetime
-    rows: list
+    rows: list[list]
 
     @property
-    def label(self):
+    def label(self) -> str:
         return self.date.strftime(DATE_LABEL)
 
 
-def find_latest_trading_day(today):
+def find_latest_trading_day(today: datetime) -> TradingDay:
     """Return the latest weekday up to today that has a bhavcopy, with its top TOP_N stocks.
 
     Holidays (no file) fall back a day, up to LOOKBACK_DAYS;
@@ -52,7 +53,7 @@ def find_latest_trading_day(today):
     raise FetchError(f"No bhavcopy found in the {LOOKBACK_DAYS} days up to {today.strftime(DATE_LABEL)}")
 
 
-def download_bhavcopy(date_obj):
+def download_bhavcopy(date_obj: datetime) -> bytes | None:
     """Return the bhavcopy zip bytes for date_obj, or None if NSE has no file (holiday / not yet published).
 
     Raises FetchError on network errors or an unexpected HTTP status,
@@ -72,7 +73,7 @@ def download_bhavcopy(date_obj):
     return response.content
 
 
-def parse_bhavcopy(content):
+def parse_bhavcopy(content: bytes) -> pd.DataFrame:
     """Read the CSV inside the bhavcopy zip into a DataFrame with canonical column names only."""
     try:
         with zipfile.ZipFile(io.BytesIO(content)) as z:
@@ -85,7 +86,7 @@ def parse_bhavcopy(content):
     return df[list(columns.values())].rename(columns={v: k for k, v in columns.items()})
 
 
-def resolve_columns(columns):
+def resolve_columns(columns: Iterable[str]) -> dict[str, str]:
     """Map each canonical name in COLUMN_ALIASES to the first alias present in columns.
 
     Optional columns that are absent are left out; any other missing column raises FetchError.
@@ -102,7 +103,7 @@ def resolve_columns(columns):
     return resolved
 
 
-def select_top_liquid(df, n):
+def select_top_liquid(df: pd.DataFrame, n: int) -> pd.DataFrame:
     """Keep EQ-series stocks (no ETFs/funds) and return the n with the highest volume."""
     if 'series' in df.columns:
         df = df[df['series'].astype(str).str.strip() == EQUITY_SERIES]

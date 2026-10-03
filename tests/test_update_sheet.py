@@ -5,14 +5,20 @@ import pytest
 import nse
 import sheet
 import update_sheet as us
-from helpers import FakeWorksheet, make_zip, udiff_csv
+from config import TIMEZONE
+from helpers import FakeWorksheet, FrozenDatetime, make_zip, udiff_csv
 
 
 # --- resolve_run_date ---
 
 @pytest.mark.parametrize("value", [None, "", "  "])
 def test_run_date_blank_means_today(value):
-    assert us.resolve_run_date(value).date() == datetime.now().date()
+    assert us.resolve_run_date(value).date() == datetime.now(TIMEZONE).date()
+
+
+def test_run_date_today_is_the_ist_date(monkeypatch):
+    monkeypatch.setattr(us, "datetime", FrozenDatetime)
+    assert us.resolve_run_date(None).date() == datetime(2026, 10, 2).date()  # still 01-Oct in UTC
 
 
 def test_run_date_parses_iso_date():

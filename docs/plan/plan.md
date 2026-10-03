@@ -25,7 +25,7 @@ The work is grouped into stages. Each stage ends with a clear outcome that can b
 | 5. Unattended schedule (Done) | The laptop updates the sheet on weekdays without intervention; one clear owner of the schedule | No |
 | 6. Clean internals (Done) | Small, testable functions with central config and a single sheet write | Yes |
 | 7. Readable structure (Done) | Four small files; `main()` reads as the four steps of the job; tests in `tests/` | Yes (split) |
-| 8. Housekeeping | Consistent, typed, IST-correct code | Yes |
+| 8. Housekeeping (Done) | Consistent, typed, IST-correct code | Yes |
 | Alt. WSL | Same as Stages 2 and 5, using Linux tooling | No |
 
 ---
@@ -293,9 +293,11 @@ Results (2026-10-03): 36 tests pass; imports with no env vars succeed; capture i
 
 Outcome: the status timestamp is correct IST regardless of the laptop's timezone, and the code is consistent and typed.
 
-- [ ] Replace `datetime.utcnow()` (deprecated since Python 3.12) with `datetime.now(ZoneInfo("Asia/Kolkata"))` in `sheet.status_update`. Consider the same for "today" in `resolve_run_date`, so a run from a laptop in another timezone picks the IST date.
+- [x] Replace `datetime.utcnow()` (deprecated since Python 3.12) with `datetime.now(ZoneInfo("Asia/Kolkata"))` in `sheet.status_update`. Consider the same for "today" in `resolve_run_date`, so a run from a laptop in another timezone picks the IST date. Done: `config.TIMEZONE` is used by both; `resolve_run_date` returns a naive datetime holding the IST date, like a parsed `RUN_DATE`. `tzdata` (needed by `zoneinfo` on Windows) is already installed as a pandas dependency.
 - [x] ~~Translate the Hindi comment to English~~: no longer present (removed during Stages 3-6).
-- [ ] Add basic type hints to the public functions in `nse.py`, `sheet.py` and `update_sheet.py`.
+- [x] Add basic type hints to the public functions in `nse.py`, `sheet.py` and `update_sheet.py`. Python 3.10 syntax (`bytes | None`, `list[dict]`), matching the GitHub workflow.
+
+Results (2026-10-03): 38 tests pass (new: status time and blank `RUN_DATE` at 01-Oct 20:00 UTC give 02-Oct 01:30 IST); imports with no env vars succeed; wrapper run `-RunDate 2026-10-01` gives `RESULT: OK (exit 0)` with status `Last Update: 03-Oct 15:21 (IST)`; live-sheet diff against a snapshot taken just before (`logs/stage8/`) changes only A1.
 
 ## Alternative: WSL instead of native Windows
 

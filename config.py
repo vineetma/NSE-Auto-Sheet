@@ -1,5 +1,6 @@
 """Every tunable value for the job: target sheet, NSE download, stock filter and sheet layout."""
 import os
+from zoneinfo import ZoneInfo
 
 # The middle value in the Google Sheet URL (not the tab). Set SPREADSHEET_ID / WORKSHEET_NAME
 # in the environment to target a different sheet, e.g. a test copy.
@@ -42,4 +43,5 @@ KEY_COL = 1                                  # A
 FIRST_BLOCK_COL = 2                          # B
 DAY_BLOCK_WIDTH = len(SHEET_COLUMNS[1:]) + 1  # values + "Signal" = 6
 STATUS_CELL = 'A1'
+TIMEZONE = ZoneInfo('Asia/Kolkata')  # NSE's: "today" and the status timestamp are IST on any machine
 DATE_LABEL = '%d-%b-%Y'  # how a trading day is shown in the sheet and logs, e.g. 01-Oct-2026

@@ -4,7 +4,7 @@ import pytest
 
 import sheet
 from config import DAY_BLOCK_WIDTH
-from helpers import FakeWorksheet
+from helpers import FakeWorksheet, FrozenDatetime
 from nse import TradingDay
 
 
@@ -38,6 +38,12 @@ def test_status_update():
     assert update["range"] == "A1"
     assert update["values"][0][0].startswith("Data Date: 01-Oct-2026 | Last Update: ")
     assert update["values"][0][0].endswith(" (IST)")
+
+
+def test_status_update_time_is_ist(monkeypatch):
+    monkeypatch.setattr(sheet, "datetime", FrozenDatetime)
+    update = sheet.status_update(TradingDay(datetime(2026, 10, 1), []))
+    assert update["values"][0][0].endswith("Last Update: 02-Oct 01:30 (IST)")
 
 
 # --- upsert_rows ---

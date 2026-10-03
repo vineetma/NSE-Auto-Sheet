@@ -1,23 +1,25 @@
 """Writing the data: where each trading day's rows go in the Google Sheet."""
 import logging
-from datetime import datetime, timedelta
+from collections.abc import Iterable
+from datetime import datetime
 
 import gspread
 from gspread.utils import rowcol_to_a1
 
-from config import (DATE_LABEL, DAY_BLOCK_WIDTH, FIRST_BLOCK_COL, KEY_COL, SPREADSHEET_ID, STATUS_CELL,
+from config import (DATE_LABEL, DAY_BLOCK_WIDTH, FIRST_BLOCK_COL, KEY_COL, SPREADSHEET_ID, STATUS_CELL, TIMEZONE,
                     WORKSHEET_NAME)
+from nse import TradingDay
 
 logger = logging.getLogger(__name__)
 
 
-def open_worksheet(credentials):
+def open_worksheet(credentials: dict) -> gspread.Worksheet:
     """Open the target worksheet with a service account key (the parsed key JSON)."""
     client = gspread.service_account_from_dict(credentials)
     return client.open_by_key(SPREADSHEET_ID).worksheet(WORKSHEET_NAME)
 
 
-def write_day(worksheet, day):
+def write_day(worksheet: gspread.Worksheet, day: TradingDay) -> None:
     """Write a TradingDay's rows into its weekday block, with the block headers and status cell, in one batch."""
     start_col = start_col_for_date(day.date)
     logger.info("Fetched %d rows for %s; start column: %s", len(day.rows), day.label, col_letter(start_col))
@@ -26,17 +28,17 @@ def write_day(worksheet, day):
     logger.info("Status: %s", status['values'][0][0])
 
 
-def start_col_for_date(d):
+def start_col_for_date(d: datetime) -> int:
     """Column number of d's block: Monday -> 2 (B), Tuesday -> 8 (H), ... Thursday -> 20 (T)."""
     return FIRST_BLOCK_COL + (d.isoweekday() - 1) * DAY_BLOCK_WIDTH
 
 
-def col_letter(col):
+def col_letter(col: int) -> str:
     """Column letter for a column number, e.g. 20 -> 'T'."""
     return rowcol_to_a1(1, col)[:-1]
 
 
-def day_header_updates(start_col, d):
+def day_header_updates(start_col: int, d: datetime) -> list[dict]:
     """Row-1 updates naming the day of the block at start_col, e.g. 'Thursday' and '01-Oct-2026'."""
     return [
         {'range': rowcol_to_a1(1, start_col), 'values': [[d.strftime('%A')]]},
@@ -44,13 +46,14 @@ def day_header_updates(start_col, d):
     ]
 
 
-def status_update(day):
+def status_update(day: TradingDay) -> dict:
     """STATUS_CELL update saying which trading day the sheet holds and when it was written (IST)."""
-    ist_now = (datetime.utcnow() + timedelta(hours=5, minutes=30)).strftime('%d-%b %H:%M')
+    ist_now = datetime.now(TIMEZONE).strftime('%d-%b %H:%M')
     return {'range': STATUS_CELL, 'values': [[f"Data Date: {day.label} | Last Update: {ist_now} (IST)"]]}
 
 
-def upsert_rows(worksheet, rows, start_col, extra_updates=()):
+def upsert_rows(worksheet: gspread.Worksheet, rows: list[list], start_col: int,
+                extra_updates: Iterable[dict] = ()) -> None:
     """Write rows into the block at start_col, plus extra_updates, in a single batch_update.
 
     rows: each row = [key, value1, value2, ...]; the key is matched against column KEY_COL

@@ -7,11 +7,12 @@ from datetime import datetime
 
 import nse
 import sheet
+from config import TIMEZONE
 
 logger = logging.getLogger("update_sheet")
 
 
-def main():
+def main() -> None:
     worksheet = sheet.open_worksheet(credentials_from_env())  # fails fast on a bad key, before any NSE call
     run_date = resolve_run_date(os.environ.get('RUN_DATE'))   # RUN_DATE or today
     logger.info("Run date: %s", run_date.strftime('%Y-%m-%d (%A)'))
@@ -20,7 +21,7 @@ def main():
     logger.info("SUCCESS: sheet updated with %s", day.label)
 
 
-def credentials_from_env():
+def credentials_from_env() -> dict:
     """The service account key from GCP_CREDENTIALS, parsed from JSON."""
     creds_json = os.environ.get('GCP_CREDENTIALS')
     if not creds_json:
@@ -28,11 +29,11 @@ def credentials_from_env():
     return json.loads(creds_json)
 
 
-def resolve_run_date(value):
-    """Parse RUN_DATE (YYYY-MM-DD); blank means today."""
+def resolve_run_date(value: str | None) -> datetime:
+    """Parse RUN_DATE (YYYY-MM-DD); blank means today in IST, whatever the machine's timezone."""
     value = (value or '').strip()
     if not value:
-        return datetime.now()
+        return datetime.now(TIMEZONE).replace(tzinfo=None)  # naive, like a parsed RUN_DATE
     try:
         return datetime.strptime(value, '%Y-%m-%d')
     except ValueError:

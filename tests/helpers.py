@@ -1,6 +1,7 @@
 """Fixtures shared by the tests: bhavcopy zips, DataFrames, and fakes for requests and gspread."""
 import io
 import zipfile
+from datetime import datetime, timezone
 
 import pandas as pd
 
@@ -25,6 +26,15 @@ def stocks_df(rows):
     return pd.DataFrame(
         [{"symbol": s, "series": sr, "isin": i, "volume": v, "open": 10.0, "close": 11.0, "low": 9.0, "high": 12.0}
          for s, sr, i, v in rows])
+
+
+class FrozenDatetime(datetime):
+    """datetime whose now() is 01-Oct-2026 20:00 UTC, i.e. 02-Oct-2026 01:30 IST: a different date in UTC and IST."""
+    INSTANT = datetime(2026, 10, 1, 20, 0, tzinfo=timezone.utc)
+
+    @classmethod
+    def now(cls, tz=None):
+        return cls.INSTANT.astimezone(tz) if tz else cls.INSTANT.replace(tzinfo=None)
 
 
 class FakeResponse:
