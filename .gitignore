@@ -1,0 +1,10 @@
+# Google service account keys (never commit)
+gsheet-access-keys.json
+*-keys.json
+*-key.json
+*service-account*.json
+
+.venv/
+logs/
+.env
+__pycache__/
