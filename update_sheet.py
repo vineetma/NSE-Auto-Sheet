@@ -148,8 +148,8 @@ data_to_insert = None
 fetched_date_str = ""
 
 for i in range(5): 
-    test_date = date(2026, 9, 30)
-    #test_date = today - timedelta(days=i)
+#    test_date = date(2026, 9, 30)
+    test_date = today - timedelta(days=i)
     if test_date.weekday() >= 5: continue
 
     data_to_insert = fetch_bhavcopy_for_date(test_date)
