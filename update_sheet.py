@@ -7,6 +7,7 @@ import io
 from datetime import datetime, timedelta
 import os
 import json
+from datetime import date
 
 # 1. Credentials Setup
 creds_json = os.environ.get('GCP_CREDENTIALS')
