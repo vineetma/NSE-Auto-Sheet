@@ -10,6 +10,8 @@ import json
 
 # 1. Credentials Setup
 creds_json = os.environ.get('GCP_CREDENTIALS')
+if not creds_json:
+    raise RuntimeError("GCP_CREDENTIALS is not set")
 creds_dict = json.loads(creds_json)
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
@@ -57,9 +59,14 @@ def fetch_bhavcopy_for_date(date_obj):
                     df = df[~df[sym_col].astype(str).str.contains(filter_keywords, case=False, na=False)]
                     
                     df_top = df.sort_values(by=vol_col, ascending=False).head(250)
-                    return df_top[[sym_col, vol_col, open_col, close_col, low_col, high_col]].values.tolist()
+                    required = [sym_col, vol_col, open_col, close_col, low_col, high_col]
+                    missing = [c for c in required if c is None or c not in df.columns]
+                    if missing:
+                        raise ValueError(f"Missing columns: {missing}")
+                    return df_top[required].values.tolist()
         return None
-    except:
+    except Exception as e:
+        print(f"Fetch failed: {e}")
         return None
 
 # 3. Execution Logic
