@@ -1,11 +1,29 @@
 """Writing the data: where each trading day's rows go in the Google Sheet."""
 import logging
+from datetime import datetime, timedelta
 
+import gspread
 from gspread.utils import rowcol_to_a1
 
-from config import DAY_BLOCK_WIDTH, FIRST_BLOCK_COL, KEY_COL
+from config import (DATE_LABEL, DAY_BLOCK_WIDTH, FIRST_BLOCK_COL, KEY_COL, SPREADSHEET_ID, STATUS_CELL,
+                    WORKSHEET_NAME)
 
 logger = logging.getLogger(__name__)
+
+
+def open_worksheet(credentials):
+    """Open the target worksheet with a service account key (the parsed key JSON)."""
+    client = gspread.service_account_from_dict(credentials)
+    return client.open_by_key(SPREADSHEET_ID).worksheet(WORKSHEET_NAME)
+
+
+def write_day(worksheet, day):
+    """Write a TradingDay's rows into its weekday block, with the block headers and status cell, in one batch."""
+    start_col = start_col_for_date(day.date)
+    logger.info("Fetched %d rows for %s; start column: %s", len(day.rows), day.label, col_letter(start_col))
+    status = status_update(day)
+    upsert_rows(worksheet, day.rows, start_col, extra_updates=day_header_updates(start_col, day.date) + [status])
+    logger.info("Status: %s", status['values'][0][0])
 
 
 def start_col_for_date(d):
@@ -22,8 +40,14 @@ def day_header_updates(start_col, d):
     """Row-1 updates naming the day of the block at start_col, e.g. 'Thursday' and '01-Oct-2026'."""
     return [
         {'range': rowcol_to_a1(1, start_col), 'values': [[d.strftime('%A')]]},
-        {'range': rowcol_to_a1(1, start_col + 1), 'values': [[d.strftime('%d-%b-%Y')]]},
+        {'range': rowcol_to_a1(1, start_col + 1), 'values': [[d.strftime(DATE_LABEL)]]},
     ]
+
+
+def status_update(day):
+    """STATUS_CELL update saying which trading day the sheet holds and when it was written (IST)."""
+    ist_now = (datetime.utcnow() + timedelta(hours=5, minutes=30)).strftime('%d-%b %H:%M')
+    return {'range': STATUS_CELL, 'values': [[f"Data Date: {day.label} | Last Update: {ist_now} (IST)"]]}
 
 
 def upsert_rows(worksheet, rows, start_col, extra_updates=()):

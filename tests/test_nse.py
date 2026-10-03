@@ -117,10 +117,11 @@ def test_latest_trading_day_skips_weekend_and_holiday(monkeypatch):
         return content if day.day == 1 else None  # 02-Oct is a holiday
 
     monkeypatch.setattr(nse, "download_bhavcopy", fake_download)
-    day, rows = nse.find_latest_trading_day(datetime(2026, 10, 4))  # Sunday
-    assert day == datetime(2026, 10, 1)
+    day = nse.find_latest_trading_day(datetime(2026, 10, 4))  # Sunday
+    assert day.date == datetime(2026, 10, 1)
+    assert day.label == "01-Oct-2026"
     assert requested == ["2026-10-02", "2026-10-01"]
-    assert rows == [["ABC", 500, 10, 11, 9, 12]]  # SHEET_COLUMNS order
+    assert day.rows == [["ABC", 500, 10, 11, 9, 12]]  # SHEET_COLUMNS order
 
 
 def test_latest_trading_day_raises_when_nothing_found(monkeypatch):

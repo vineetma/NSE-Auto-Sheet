@@ -2,12 +2,13 @@
 import io
 import logging
 import zipfile
-from datetime import timedelta
+from dataclasses import dataclass
+from datetime import datetime, timedelta
 
 import pandas as pd
 import requests
 
-from config import (COLUMN_ALIASES, EQUITY_SERIES, FUND_ISIN_PREFIX, LOOKBACK_DAYS, NSE_HEADERS,
+from config import (COLUMN_ALIASES, DATE_LABEL, EQUITY_SERIES, FUND_ISIN_PREFIX, LOOKBACK_DAYS, NSE_HEADERS,
                     NSE_TIMEOUT, NSE_URL, OPTIONAL_COLUMNS, SHEET_COLUMNS, TOP_N)
 
 logger = logging.getLogger(__name__)
@@ -17,11 +18,22 @@ class FetchError(RuntimeError):
     """The bhavcopy could not be downloaded or parsed (not a holiday)."""
 
 
-def find_latest_trading_day(today):
-    """Return (date, rows) for the latest weekday up to today that has a bhavcopy.
+@dataclass
+class TradingDay:
+    """A trading day and its top stocks, each row in SHEET_COLUMNS order."""
+    date: datetime
+    rows: list
 
-    rows are SHEET_COLUMNS values for the top TOP_N stocks. Holidays (no file) fall back a day,
-    up to LOOKBACK_DAYS; raises FetchError if none is found or a file is unusable.
+    @property
+    def label(self):
+        return self.date.strftime(DATE_LABEL)
+
+
+def find_latest_trading_day(today):
+    """Return the latest weekday up to today that has a bhavcopy, with its top TOP_N stocks.
+
+    Holidays (no file) fall back a day, up to LOOKBACK_DAYS;
+    raises FetchError if none is found or a file is unusable.
     """
     for i in range(LOOKBACK_DAYS):
         day = today - timedelta(days=i)
@@ -33,11 +45,11 @@ def find_latest_trading_day(today):
         try:
             top = select_top_liquid(parse_bhavcopy(content), TOP_N)
         except FetchError as e:
-            raise FetchError(f"Bhavcopy for {day.strftime('%d-%b-%Y')}: {e}") from e
+            raise FetchError(f"Bhavcopy for {day.strftime(DATE_LABEL)}: {e}") from e
         if top.empty:
-            raise FetchError(f"Bhavcopy for {day.strftime('%d-%b-%Y')} has no {EQUITY_SERIES} rows after filtering")
-        return day, top[SHEET_COLUMNS].values.tolist()
-    raise FetchError(f"No bhavcopy found in the {LOOKBACK_DAYS} days up to {today.strftime('%d-%b-%Y')}")
+            raise FetchError(f"Bhavcopy for {day.strftime(DATE_LABEL)} has no {EQUITY_SERIES} rows after filtering")
+        return TradingDay(day, top[SHEET_COLUMNS].values.tolist())
+    raise FetchError(f"No bhavcopy found in the {LOOKBACK_DAYS} days up to {today.strftime(DATE_LABEL)}")
 
 
 def download_bhavcopy(date_obj):
@@ -53,7 +65,7 @@ def download_bhavcopy(date_obj):
         raise FetchError(f"Network error fetching {url}: {e}") from e
 
     if response.status_code == 404:
-        logger.info("No bhavcopy for %s (HTTP 404: holiday or not yet published)", date_obj.strftime('%d-%b-%Y'))
+        logger.info("No bhavcopy for %s (HTTP 404: holiday or not yet published)", date_obj.strftime(DATE_LABEL))
         return None
     if response.status_code != 200:
         raise FetchError(f"Unexpected HTTP {response.status_code} fetching {url}")

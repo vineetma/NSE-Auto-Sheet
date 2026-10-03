@@ -42,3 +42,4 @@ KEY_COL = 1                                  # A
 FIRST_BLOCK_COL = 2                          # B
 DAY_BLOCK_WIDTH = len(SHEET_COLUMNS[1:]) + 1  # values + "Signal" = 6
 STATUS_CELL = 'A1'
+DATE_LABEL = '%d-%b-%Y'  # how a trading day is shown in the sheet and logs, e.g. 01-Oct-2026

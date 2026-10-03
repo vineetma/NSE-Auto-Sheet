@@ -5,6 +5,7 @@ import pytest
 import sheet
 from config import DAY_BLOCK_WIDTH
 from helpers import FakeWorksheet
+from nse import TradingDay
 
 
 # --- sheet layout ---
@@ -30,6 +31,13 @@ def test_day_header_updates():
         {"range": "T1", "values": [["Thursday"]]},
         {"range": "U1", "values": [["01-Oct-2026"]]},
     ]
+
+
+def test_status_update():
+    update = sheet.status_update(TradingDay(datetime(2026, 10, 1), []))
+    assert update["range"] == "A1"
+    assert update["values"][0][0].startswith("Data Date: 01-Oct-2026 | Last Update: ")
+    assert update["values"][0][0].endswith(" (IST)")
 
 
 # --- upsert_rows ---
