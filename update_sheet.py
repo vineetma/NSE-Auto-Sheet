@@ -69,6 +69,59 @@ def fetch_bhavcopy_for_date(date_obj):
         print(f"Fetch failed: {e}")
         return None
 
+def col_num_to_letter(n):
+    """1 -> A, 2 -> B, ... 27 -> AA, etc."""
+    letters = ''
+    while n > 0:
+        n, remainder = divmod(n - 1, 26)
+        letters = chr(65 + remainder) + letters
+    return letters
+    
+def start_col_for_date(d):
+    """Monday=1 ... Sunday=7, matching your (wkday-1)*6+2 formula."""
+    weekday = d.isoweekday()  # Mon=1, ..., Sun=7
+    col_idx = (weekday - 1) * 6 + 2
+    return col_num_to_letter(col_idx) 
+    
+def upsert_rows(worksheet, data_to_insert, key_col='A', start_col='B'):
+    """
+    data_to_insert: list of rows, each row = [key, value1, value2, ...]
+                    (key = the symbol/date/whatever goes in key_col;
+                     value1, value2, ... are what gets pasted starting at start_col)
+    key_col:   column holding the match key (default 'A')
+    start_col: column where the non-key values start being pasted (default 'B')
+    """
+    key_col_idx = gspread.utils.a1_to_rowcol(f"{key_col}1")[1]
+
+    # one read: existing keys from row 2 down
+    existing_keys = worksheet.col_values(key_col_idx)[1:]
+    key_to_row = {str(k).strip(): i + 2 for i, k in enumerate(existing_keys) if str(k).strip()}
+    next_new_row = len(existing_keys) + 2
+
+    batch_data = []
+    for row in data_to_insert:
+        key, *values = row
+        key = str(key).strip()
+
+        if key in key_to_row:
+            target_row = key_to_row[key]
+        else:
+            target_row = next_new_row
+            key_to_row[key] = target_row
+            next_new_row += 1
+            # new row — write the key into column A ourselves
+            batch_data.append({'range': f"{key_col}{target_row}", 'values': [[key]]})
+
+        batch_data.append({'range': f"{start_col}{target_row}", 'values': [values]})
+
+    if batch_data:
+        worksheet.batch_update(batch_data, value_input_option='USER_ENTERED')
+
+
+# usage
+#data_to_insert = fetch_bhavcopy_for_date(test_date)  # [[symbol, open, high, low, close, volume], ...]
+#upsert_rows(worksheet, data_to_insert, key_col='A', start_col='B')
+        
 # 3. Execution Logic
 date = datetime.now()
 data_to_insert = None
@@ -77,16 +130,20 @@ fetched_date_str = ""
 for i in range(5): 
     test_date = date - timedelta(days=i)
     if test_date.weekday() >= 5: continue
-        
+
+    test_date = date(2026, 9, 30)
     data_to_insert = fetch_bhavcopy_for_date(test_date)
+    start_col = start_col_for_date(test_date)
+    upsert_rows(worksheet, data_to_insert, key_col='A', start_col=start_col)
+    
     if data_to_insert:
         fetched_date_str = test_date.strftime('%d-%b-%Y')
         break
 
 # 4. Update Sheet
 if data_to_insert:
-    worksheet.batch_clear(['A2:G251'])
-    worksheet.update('A2', data_to_insert)
+    #worksheet.batch_clear(['A2:G251'])
+    #worksheet.update('A2', data_to_insert)
     ist_now = (datetime.utcnow() + timedelta(hours=5, minutes=30)).strftime('%d-%b %H:%M')
     status_msg = f"Data Date: {fetched_date_str} | Last Update: {ist_now} (IST)"
     worksheet.update('K2', [[status_msg]])
