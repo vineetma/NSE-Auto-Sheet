@@ -2,7 +2,7 @@ name: Update NSE Stocks to Google Sheet
 on:
   schedule:
     # It will run at 11:22 am IST
-    - cron: '52 05 * * 1-5'
+    - cron: '56 05 * * 1-5'
   workflow_dispatch:
 
 jobs:
