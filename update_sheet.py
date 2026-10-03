@@ -11,27 +11,21 @@ import sys
 
 logger = logging.getLogger("update_sheet")
 
-# 1. Sheet Setup
-# The middle value in the Google Sheet URL (not the tab).
-SPREADSHEET_ID = "1mOVPxjgc1w0j2WPG_Xp4t8SKl_eb2-wHCWfdAiO145Q"
-WORKSHEET_NAME = "Top 250 Stocks"
+# 1. Config
+# The middle value in the Google Sheet URL (not the tab). Set SPREADSHEET_ID / WORKSHEET_NAME
+# in the environment to target a different sheet, e.g. a test copy.
+SPREADSHEET_ID = os.environ.get('SPREADSHEET_ID') or "1mOVPxjgc1w0j2WPG_Xp4t8SKl_eb2-wHCWfdAiO145Q"
+WORKSHEET_NAME = os.environ.get('WORKSHEET_NAME') or "Top 250 Stocks"
 
-def get_worksheet():
-    creds_json = os.environ.get('GCP_CREDENTIALS')
-    if not creds_json:
-        raise RuntimeError("GCP_CREDENTIALS is not set")
-    client = gspread.service_account_from_dict(json.loads(creds_json))
-    return client.open_by_key(SPREADSHEET_ID).worksheet(WORKSHEET_NAME)
-
-# 2. NSE UDiFF Data Fetcher
-class FetchError(RuntimeError):
-    """The bhavcopy could not be downloaded or parsed (not a holiday)."""
+TOP_N = 250
+LOOKBACK_DAYS = 5  # calendar days to search back for the latest bhavcopy
 
 NSE_URL = "https://nsearchives.nseindia.com/content/cm/BhavCopy_NSE_CM_0_0_0_{date:%Y%m%d}_F_0000.csv.zip"
 NSE_HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
 }
+NSE_TIMEOUT = 15  # seconds
 
 # Canonical column name -> bhavcopy column names, UDiFF format first, then the old format.
 COLUMN_ALIASES = {
@@ -45,6 +39,23 @@ COLUMN_ALIASES = {
 }
 OPTIONAL_COLUMNS = {'series'}
 
+EQUITY_SERIES = 'EQ'
+EXCLUDE_SYMBOL_KEYWORDS = ['BEES', 'ETF', 'GOLD', 'LIQUID', 'CASE', 'SILVER', 'LIQ']
+
+# Values written per stock: column A holds the symbol, the rest go into the day's block.
+SHEET_COLUMNS = ['symbol', 'volume', 'open', 'close', 'low', 'high']
+
+def get_worksheet():
+    creds_json = os.environ.get('GCP_CREDENTIALS')
+    if not creds_json:
+        raise RuntimeError("GCP_CREDENTIALS is not set")
+    client = gspread.service_account_from_dict(json.loads(creds_json))
+    return client.open_by_key(SPREADSHEET_ID).worksheet(WORKSHEET_NAME)
+
+# 2. NSE UDiFF Data Fetcher
+class FetchError(RuntimeError):
+    """The bhavcopy could not be downloaded or parsed (not a holiday)."""
+
 def download_bhavcopy(date_obj):
     """Return the bhavcopy zip bytes for date_obj, or None if NSE has no file (holiday / not yet published).
 
@@ -53,7 +64,7 @@ def download_bhavcopy(date_obj):
     """
     url = NSE_URL.format(date=date_obj)
     try:
-        response = requests.get(url, headers=NSE_HEADERS, timeout=15)
+        response = requests.get(url, headers=NSE_HEADERS, timeout=NSE_TIMEOUT)
     except requests.RequestException as e:
         raise FetchError(f"Network error fetching {url}: {e}") from e
 
@@ -95,24 +106,42 @@ def parse_bhavcopy(content):
 def select_top_liquid(df, n):
     """Keep EQ-series stocks (no ETFs/funds) and return the n with the highest volume."""
     if 'series' in df.columns:
-        df = df[df['series'].astype(str).str.strip() == 'EQ']
-    filter_keywords = 'BEES|ETF|GOLD|LIQUID|CASE|SILVER|LIQ'
+        df = df[df['series'].astype(str).str.strip() == EQUITY_SERIES]
+    filter_keywords = '|'.join(EXCLUDE_SYMBOL_KEYWORDS)
     df = df[~df['symbol'].astype(str).str.contains(filter_keywords, case=False, na=False)]
     return df.sort_values(by='volume', ascending=False).head(n)
 
-def fetch_bhavcopy_for_date(date_obj):
-    """Return the top-250 rows for date_obj, or None if NSE has no file (holiday / not yet published)."""
-    content = download_bhavcopy(date_obj)
-    if content is None:
-        return None
-    date_str = date_obj.strftime('%d-%b-%Y')
+def resolve_run_date(value):
+    """Parse RUN_DATE (YYYY-MM-DD); blank means today."""
+    value = (value or '').strip()
+    if not value:
+        return datetime.now()
     try:
-        df_top = select_top_liquid(parse_bhavcopy(content), 250)
-    except FetchError as e:
-        raise FetchError(f"Bhavcopy for {date_str}: {e}") from e
-    if df_top.empty:
-        raise FetchError(f"Bhavcopy for {date_str} has no EQ rows after filtering")
-    return df_top[['symbol', 'volume', 'open', 'close', 'low', 'high']].values.tolist()
+        return datetime.strptime(value, '%Y-%m-%d')
+    except ValueError:
+        raise ValueError(f"RUN_DATE='{value}' is not in YYYY-MM-DD format") from None
+
+def find_latest_trading_day(today):
+    """Return (date, rows) for the latest weekday up to today that has a bhavcopy.
+
+    rows are SHEET_COLUMNS values for the top TOP_N stocks. Holidays (no file) fall back a day,
+    up to LOOKBACK_DAYS; raises FetchError if none is found or a file is unusable.
+    """
+    for i in range(LOOKBACK_DAYS):
+        day = today - timedelta(days=i)
+        if day.weekday() >= 5:
+            continue
+        content = download_bhavcopy(day)
+        if content is None:
+            continue
+        try:
+            top = select_top_liquid(parse_bhavcopy(content), TOP_N)
+        except FetchError as e:
+            raise FetchError(f"Bhavcopy for {day.strftime('%d-%b-%Y')}: {e}") from e
+        if top.empty:
+            raise FetchError(f"Bhavcopy for {day.strftime('%d-%b-%Y')} has no {EQUITY_SERIES} rows after filtering")
+        return day, top[SHEET_COLUMNS].values.tolist()
+    raise FetchError(f"No bhavcopy found in the {LOOKBACK_DAYS} days up to {today.strftime('%d-%b-%Y')}")
 
 def col_num_to_letter(n):
     """1 -> A, 2 -> B, ... 27 -> AA, etc."""
@@ -174,46 +203,23 @@ def upsert_rows(worksheet, data_to_insert, key_col='A', start_col='B', extra_upd
 
 
 # 3. Execution Logic
-LOOKBACK_DAYS = 5
-
 def main():
     worksheet = get_worksheet()
 
-    run_date_str = os.environ.get('RUN_DATE', '').strip()
-    if run_date_str:
-        try:
-            today = datetime.strptime(run_date_str, '%Y-%m-%d')
-        except ValueError:
-            raise ValueError(f"RUN_DATE='{run_date_str}' is not in YYYY-MM-DD format") from None
-    else:
-        today = datetime.now()
+    today = resolve_run_date(os.environ.get('RUN_DATE'))
     logger.info("Run date: %s", today.strftime('%Y-%m-%d (%A)'))
-    data_to_insert = None
-    fetched_date_str = ""
 
-    for i in range(LOOKBACK_DAYS):
-        test_date = today - timedelta(days=i)
-        if test_date.weekday() >= 5: continue
-
-        data_to_insert = fetch_bhavcopy_for_date(test_date)
-        if not data_to_insert:
-            continue
-        start_col = start_col_for_date(test_date)
-        logger.info("Fetched %d rows for %s; start column: %s",
-                    len(data_to_insert), test_date.strftime('%d-%b-%Y'), start_col)
-        header_updates = day_header_updates(start_col, test_date)
-        upsert_rows(worksheet, data_to_insert, key_col='A', start_col=start_col, extra_updates=header_updates)
-        fetched_date_str = test_date.strftime('%d-%b-%Y')
-        if data_to_insert:
-            fetched_date_str = test_date.strftime('%d-%b-%Y')
-            break
-
-    if not data_to_insert:
-        raise FetchError(f"No bhavcopy found in the {LOOKBACK_DAYS} days up to {today.strftime('%d-%b-%Y')}")
+    data_date, rows = find_latest_trading_day(today)
+    start_col = start_col_for_date(data_date)
+    logger.info("Fetched %d rows for %s; start column: %s",
+                len(rows), data_date.strftime('%d-%b-%Y'), start_col)
 
     # 4. Update Sheet
+    header_updates = day_header_updates(start_col, data_date)
+    upsert_rows(worksheet, rows, key_col='A', start_col=start_col, extra_updates=header_updates)
+
     ist_now = (datetime.utcnow() + timedelta(hours=5, minutes=30)).strftime('%d-%b %H:%M')
-    status_msg = f"Data Date: {fetched_date_str} | Last Update: {ist_now} (IST)"
+    status_msg = f"Data Date: {data_date.strftime('%d-%b-%Y')} | Last Update: {ist_now} (IST)"
     worksheet.update('A1', [[status_msg]])
     logger.info("SUCCESS: Sheet Updated! (%s)", status_msg)
 
