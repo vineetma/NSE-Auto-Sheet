@@ -6,6 +6,10 @@ import io
 from datetime import datetime, timedelta
 import os
 import json
+import logging
+import sys
+
+logger = logging.getLogger("update_sheet")
 
 # 1. Sheet Setup
 # The middle value in the Google Sheet URL (not the tab).
@@ -20,7 +24,15 @@ def get_worksheet():
     return client.open_by_key(SPREADSHEET_ID).worksheet(WORKSHEET_NAME)
 
 # 2. NSE UDiFF Data Fetcher
+class FetchError(RuntimeError):
+    """The bhavcopy could not be downloaded or parsed (not a holiday)."""
+
 def fetch_bhavcopy_for_date(date_obj):
+    """Return the top-250 rows for date_obj, or None if NSE has no file (holiday / not yet published).
+
+    Raises FetchError on network errors, unexpected HTTP status, or a malformed file,
+    so a real failure is never mistaken for a holiday.
+    """
     date_str = date_obj.strftime("%Y%m%d")
     url = f"https://nsearchives.nseindia.com/content/cm/BhavCopy_NSE_CM_0_0_0_{date_str}_F_0000.csv.zip"
     
@@ -31,41 +43,51 @@ def fetch_bhavcopy_for_date(date_obj):
     
     try:
         response = requests.get(url, headers=headers, timeout=15)
-        if response.status_code == 200:
-            with zipfile.ZipFile(io.BytesIO(response.content)) as z:
-                csv_filename = z.namelist()[0]
-                with z.open(csv_filename) as f:
-                    df = pd.read_csv(f)
-                    
-                    sym_col = 'TckrSymb' if 'TckrSymb' in df.columns else 'SYMBOL'
-                    close_col = 'ClsPric' if 'ClsPric' in df.columns else 'CLOSE'
-                    open_col = 'OpnPric' if 'OpnPric' in df.columns else 'OPEN'
-                    low_col = 'LwPric' if 'LwPric' in df.columns else 'LOW'
-                    high_col = 'HghPric' if 'HghPric' in df.columns else 'HIGH'
-                    series_col = 'SctySrs' if 'SctySrs' in df.columns else 'SERIES'
-                    
-                    vol_col = 'TtlTradgVol'
-                    for c in ['TtlTradgVol', 'TtlTrdQty', 'TotTrdQty', 'TOTTRDQTY']:
-                        if c in df.columns:
-                            vol_col = c
-                            break
-                    
-                    # सिर्फ EQ सीरीज और ETFs (LIQUID/BEES) को बाहर करना
-                    if series_col in df.columns:
-                        df = df[df[series_col].astype(str).str.strip() == 'EQ']
-                    filter_keywords = 'BEES|ETF|GOLD|LIQUID|CASE|SILVER|LIQ'
-                    df = df[~df[sym_col].astype(str).str.contains(filter_keywords, case=False, na=False)]
-                    
-                    df_top = df.sort_values(by=vol_col, ascending=False).head(250)
-                    required = [sym_col, vol_col, open_col, close_col, low_col, high_col]
-                    missing = [c for c in required if c is None or c not in df.columns]
-                    if missing:
-                        raise ValueError(f"Missing columns: {missing}")
-                    return df_top[required].values.tolist()
+    except requests.RequestException as e:
+        raise FetchError(f"Network error fetching {url}: {e}") from e
+
+    if response.status_code == 404:
+        logger.info("No bhavcopy for %s (HTTP 404: holiday or not yet published)", date_obj.strftime('%d-%b-%Y'))
         return None
+    if response.status_code != 200:
+        raise FetchError(f"Unexpected HTTP {response.status_code} fetching {url}")
+
+    try:
+        with zipfile.ZipFile(io.BytesIO(response.content)) as z:
+            csv_filename = z.namelist()[0]
+            with z.open(csv_filename) as f:
+                df = pd.read_csv(f)
     except Exception as e:
-        print(f"Fetch failed: {e}")
-        return None
+        raise FetchError(f"Could not read bhavcopy zip/CSV from {url}: {e}") from e
+
+    sym_col = 'TckrSymb' if 'TckrSymb' in df.columns else 'SYMBOL'
+    close_col = 'ClsPric' if 'ClsPric' in df.columns else 'CLOSE'
+    open_col = 'OpnPric' if 'OpnPric' in df.columns else 'OPEN'
+    low_col = 'LwPric' if 'LwPric' in df.columns else 'LOW'
+    high_col = 'HghPric' if 'HghPric' in df.columns else 'HIGH'
+    series_col = 'SctySrs' if 'SctySrs' in df.columns else 'SERIES'
+    
+    vol_col = 'TtlTradgVol'
+    for c in ['TtlTradgVol', 'TtlTrdQty', 'TotTrdQty', 'TOTTRDQTY']:
+        if c in df.columns:
+            vol_col = c
+            break
+
+    required = [sym_col, vol_col, open_col, close_col, low_col, high_col]
+    missing = [c for c in required if c not in df.columns]
+    if missing:
+        raise FetchError(f"Bhavcopy for {date_str} is missing columns {missing}; got {list(df.columns)}")
+    
+    # सिर्फ EQ सीरीज और ETFs (LIQUID/BEES) को बाहर करना
+    if series_col in df.columns:
+        df = df[df[series_col].astype(str).str.strip() == 'EQ']
+    filter_keywords = 'BEES|ETF|GOLD|LIQUID|CASE|SILVER|LIQ'
+    df = df[~df[sym_col].astype(str).str.contains(filter_keywords, case=False, na=False)]
+    
+    df_top = df.sort_values(by=vol_col, ascending=False).head(250)
+    if df_top.empty:
+        raise FetchError(f"Bhavcopy for {date_str} has no EQ rows after filtering")
+    return df_top[required].values.tolist()
 
 def col_num_to_letter(n):
     """1 -> A, 2 -> B, ... 27 -> AA, etc."""
@@ -127,6 +149,8 @@ def upsert_rows(worksheet, data_to_insert, key_col='A', start_col='B', extra_upd
 
 
 # 3. Execution Logic
+LOOKBACK_DAYS = 5
+
 def main():
     worksheet = get_worksheet()
 
@@ -135,14 +159,14 @@ def main():
         try:
             today = datetime.strptime(run_date_str, '%Y-%m-%d')
         except ValueError:
-            print(f"WARNING: RUN_DATE='{run_date_str}' is not in YYYY-MM-DD format, falling back to today.")
-            today = datetime.now()
+            raise ValueError(f"RUN_DATE='{run_date_str}' is not in YYYY-MM-DD format") from None
     else:
         today = datetime.now()
+    logger.info("Run date: %s", today.strftime('%Y-%m-%d (%A)'))
     data_to_insert = None
     fetched_date_str = ""
 
-    for i in range(5):
+    for i in range(LOOKBACK_DAYS):
         test_date = today - timedelta(days=i)
         if test_date.weekday() >= 5: continue
 
@@ -150,7 +174,8 @@ def main():
         if not data_to_insert:
             continue
         start_col = start_col_for_date(test_date)
-        print("Start Column: ", start_col)
+        logger.info("Fetched %d rows for %s; start column: %s",
+                    len(data_to_insert), test_date.strftime('%d-%b-%Y'), start_col)
         header_updates = day_header_updates(start_col, test_date)
         upsert_rows(worksheet, data_to_insert, key_col='A', start_col=start_col, extra_updates=header_updates)
         fetched_date_str = test_date.strftime('%d-%b-%Y')
@@ -158,13 +183,21 @@ def main():
             fetched_date_str = test_date.strftime('%d-%b-%Y')
             break
 
+    if not data_to_insert:
+        raise FetchError(f"No bhavcopy found in the {LOOKBACK_DAYS} days up to {today.strftime('%d-%b-%Y')}")
+
     # 4. Update Sheet
-    if data_to_insert:
-        ist_now = (datetime.utcnow() + timedelta(hours=5, minutes=30)).strftime('%d-%b %H:%M')
-        status_msg = f"Data Date: {fetched_date_str} | Last Update: {ist_now} (IST)"
-        worksheet.update('A1', [[status_msg]])
-        print("SUCCESS: Sheet Updated!")
+    ist_now = (datetime.utcnow() + timedelta(hours=5, minutes=30)).strftime('%d-%b %H:%M')
+    status_msg = f"Data Date: {fetched_date_str} | Last Update: {ist_now} (IST)"
+    worksheet.update('A1', [[status_msg]])
+    logger.info("SUCCESS: Sheet Updated! (%s)", status_msg)
 
 
 if __name__ == "__main__":
-    main()
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s",
+                        datefmt="%Y-%m-%d %H:%M:%S", stream=sys.stdout)
+    try:
+        main()
+    except Exception:
+        logger.exception("FAIL: sheet not updated")
+        sys.exit(1)
