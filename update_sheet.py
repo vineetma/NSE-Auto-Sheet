@@ -124,7 +124,16 @@ def upsert_rows(worksheet, data_to_insert, key_col='A', start_col='B'):
 #upsert_rows(worksheet, data_to_insert, key_col='A', start_col='B')
         
 # 3. Execution Logic
-today = datetime.now()
+#today = datetime.now()
+run_date_str = os.environ.get('RUN_DATE', '').strip()
+if run_date_str:
+    try:
+        today = datetime.strptime(run_date_str, '%Y-%m-%d')
+    except ValueError:
+        print(f"WARNING: RUN_DATE='{run_date_str}' is not in YYYY-MM-DD format, falling back to today.")
+        today = datetime.now()
+else:
+    today = datetime.now()
 data_to_insert = None
 fetched_date_str = ""
 
