@@ -32,6 +32,7 @@ NSE_TIMEOUT = 15  # seconds
 COLUMN_ALIASES = {
     'symbol': ['TckrSymb', 'SYMBOL'],
     'series': ['SctySrs', 'SERIES'],
+    'isin': ['ISIN'],
     'volume': ['TtlTradgVol', 'TtlTrdQty', 'TotTrdQty', 'TOTTRDQTY'],
     'open': ['OpnPric', 'OPEN'],
     'close': ['ClsPric', 'CLOSE'],
@@ -41,7 +42,9 @@ COLUMN_ALIASES = {
 OPTIONAL_COLUMNS = {'series'}
 
 EQUITY_SERIES = 'EQ'
-EXCLUDE_SYMBOL_KEYWORDS = ['BEES', 'ETF', 'GOLD', 'LIQUID', 'CASE', 'SILVER', 'LIQ']
+# ETFs and other fund units trade in the EQ series too; their ISINs start with INF
+# (company shares use INE), which is more reliable than matching words in the symbol.
+FUND_ISIN_PREFIX = 'INF'
 
 # Sheet layout. Row 1 holds the status cell and each day's name/date, row 2 the column headers.
 # Column A holds the symbol (SHEET_COLUMNS[0]); each weekday has a block, Monday's starting at
@@ -114,8 +117,7 @@ def select_top_liquid(df, n):
     """Keep EQ-series stocks (no ETFs/funds) and return the n with the highest volume."""
     if 'series' in df.columns:
         df = df[df['series'].astype(str).str.strip() == EQUITY_SERIES]
-    filter_keywords = '|'.join(EXCLUDE_SYMBOL_KEYWORDS)
-    df = df[~df['symbol'].astype(str).str.contains(filter_keywords, case=False, na=False)]
+    df = df[~df['isin'].astype(str).str.strip().str.upper().str.startswith(FUND_ISIN_PREFIX)]
     return df.sort_values(by='volume', ascending=False).head(n)
 
 def resolve_run_date(value):

@@ -103,7 +103,7 @@ def test_parse_old_format():
 
 
 def test_parse_without_optional_columns():
-    csv = "TckrSymb,OpnPric,HghPric,LwPric,ClsPric,TtlTradgVol\nABC,10,12,9,11,500\n"
+    csv = "TckrSymb,ISIN,OpnPric,HghPric,LwPric,ClsPric,TtlTradgVol\nABC,INE000A01011,10,12,9,11,500\n"
     df = us.parse_bhavcopy(make_zip(csv))
     assert "series" not in df.columns
 
@@ -136,10 +136,17 @@ def test_select_without_series_column():
     assert us.select_top_liquid(df, 10)["symbol"].tolist() == ["BBB", "AAA"]
 
 
-def test_select_excludes_etfs():
-    df = stocks_df([("GOLDBEES", "EQ", "INF204KB17I5", 900), ("NIFTYBEES", "EQ", "INF204KB14I2", 800),
+def test_select_excludes_etfs_by_isin():
+    df = stocks_df([("GOLDBEES", "EQ", "INF204KB17I5", 900), ("TATSILV", "EQ", "INF277KA1984", 800),
                     ("RELIANCE", "EQ", "INE002A01018", 100)])
     assert us.select_top_liquid(df, 10)["symbol"].tolist() == ["RELIANCE"]
+
+
+def test_select_keeps_equities_with_fund_like_names():
+    # The old symbol-keyword filter dropped these real companies.
+    df = stocks_df([("SKYGOLD", "EQ", "INE182Z01015", 3), ("JETFREIGHT", "EQ", "INE982V01025", 2),
+                    ("SILVERTUC", "EQ", "INE625X01018", 1)])
+    assert us.select_top_liquid(df, 10)["symbol"].tolist() == ["SKYGOLD", "JETFREIGHT", "SILVERTUC"]
 
 
 # --- resolve_run_date ---
