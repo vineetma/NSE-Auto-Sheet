@@ -4,7 +4,11 @@ on:
     # It will run at 11:22 am IST
     - cron: '56 05 * * 1-5'
   workflow_dispatch:
-
+    inputs:
+      run_date:
+        description: 'Date to fetch bhavcopy for (YYYY-MM-DD). Leave blank for today.'
+        required: false
+        default: ''
 jobs:
   update-sheet:
     runs-on: ubuntu-latest
@@ -23,4 +27,5 @@ jobs:
       - name: Run Python Script
         env:
           GCP_CREDENTIALS: ${{ secrets.GCP_CREDENTIALS }}
+          RUN_DATE: ${{ github.event.inputs.run_date }}
         run: python update_sheet.py
