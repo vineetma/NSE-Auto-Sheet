@@ -82,15 +82,25 @@ def start_col_for_date(d):
     """Monday=1 ... Sunday=7, matching your (wkday-1)*6+2 formula."""
     weekday = d.isoweekday()  # Mon=1, ..., Sun=7
     col_idx = (weekday - 1) * 6 + 2
-    return col_num_to_letter(col_idx) 
+    return col_num_to_letter(col_idx)
+
+def day_header_updates(start_col, d):
+    col_idx = gspread.utils.a1_to_rowcol(f"{start_col}1")[1]
+    next_col = col_num_to_letter(col_idx + 1)
+    return [
+        {'range': f"{start_col}1", 'values': [[d.strftime('%A')]]},        # e.g. "Wednesday"
+        {'range': f"{next_col}1", 'values': [[d.strftime('%d-%b-%Y')]]},   # e.g. "30-Sep-2026"
+    ]
     
-def upsert_rows(worksheet, data_to_insert, key_col='A', start_col='B'):
+def upsert_rows(worksheet, data_to_insert, key_col='A', start_col='B', extra_updates=None):
     """
     data_to_insert: list of rows, each row = [key, value1, value2, ...]
                     (key = the symbol/date/whatever goes in key_col;
                      value1, value2, ... are what gets pasted starting at start_col)
     key_col:   column holding the match key (default 'A')
     start_col: column where the non-key values start being pasted (default 'B')
+    extra_updates: optional list of {'range': ..., 'values': [[...]]} dicts
+                   to fold into the same batch_update call (e.g. header row cells).
     """
     key_col_idx = gspread.utils.a1_to_rowcol(f"{key_col}1")[1]
 
@@ -99,7 +109,7 @@ def upsert_rows(worksheet, data_to_insert, key_col='A', start_col='B'):
     key_to_row = {str(k).strip(): i + 2 for i, k in enumerate(existing_keys) if str(k).strip()}
     next_new_row = len(existing_keys) + 2
 
-    batch_data = []
+    batch_data = list(extra_updates) if extra_updates else []
     for row in data_to_insert:
         key, *values = row
         key = str(key).strip()
@@ -146,6 +156,7 @@ for i in range(5):
     if not data_to_insert:
         continue
     start_col = start_col_for_date(test_date)
+    header_updates = day_header_updates(start_col, test_date)
     upsert_rows(worksheet, data_to_insert, key_col='A', start_col=start_col)
     fetched_date_str = test_date.strftime('%d-%b-%Y')
     if data_to_insert:
