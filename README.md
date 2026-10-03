@@ -43,3 +43,14 @@ The task runs `run_local.ps1` as you, only while you are logged on (so no passwo
 ## Failures
 
 A missing bhavcopy (HTTP 404, i.e. a holiday or a file not yet published) falls back to the previous trading day, up to 5 days back. Anything else exits with code 1 and logs `FAIL: sheet not updated` with the cause: a network error, any other HTTP status, a corrupt zip/CSV, missing columns, no data in the 5-day window, a bad key, or a `RUN_DATE` that is not `YYYY-MM-DD`. In GitHub Actions this marks the job as failed.
+
+## Tests
+
+Unit tests use fixtures and a fake worksheet, so they make no network or Google calls:
+
+```powershell
+.venv\Scripts\pip install -r requirements-dev.txt
+.venv\Scripts\python -m pytest
+```
+
+Set `SPREADSHEET_ID` and/or `WORKSHEET_NAME` to point a real run at a different sheet, e.g. a test copy.
