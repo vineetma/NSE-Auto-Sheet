@@ -28,15 +28,17 @@ The wrapper loads the key into `GCP_CREDENTIALS`, sets `RUN_DATE`, runs `update_
 
 ## Scheduling on the laptop
 
-GitHub Actions is the primary schedule (weekdays 05:56 UTC, 11:26 IST). The laptop runs as a backup through Windows Task Scheduler:
+GitHub Actions is the primary schedule (weekdays at 20:00 IST, 14:30 UTC). An optional local backup in Windows Task Scheduler ("NSE Auto Sheet") runs at the same time. It is disabled by default:
 
 ```powershell
-.\scripts\register_task.ps1                  # "NSE Auto Sheet", Mon-Fri at 20:00 local time
-.\scripts\register_task.ps1 -At 18:30 -WakeToRun
-.\scripts\register_task.ps1 -Disabled        # keep it for on-demand runs only
+.\scripts\local_schedule.ps1                 # status
+.\scripts\local_schedule.ps1 enable          # Mon-Fri at 20:00 local time
+.\scripts\local_schedule.ps1 enable -At 18:30 -WakeToRun
+.\scripts\local_schedule.ps1 disable         # keep the task, but don't run it on a schedule
+.\scripts\local_schedule.ps1 remove
 ```
 
-The task runs `run_local.ps1` as you, only while you are logged on (so no password is stored). If the laptop is off or asleep at the scheduled time, the run starts as soon as possible afterwards. Re-running the script replaces the task. Running both schedules is safe because each write overwrites that day's column block. Check "Last Run Result" in Task Scheduler (0 = OK, 1 = failed) and the `logs\` folder.
+The task runs `run_local.ps1` as you, only while you are logged on (so no password is stored). If the laptop is off or asleep at the scheduled time, the run starts as soon as possible afterwards. Running both schedules is safe because each write overwrites that day's column block. Check "Last Run Result" in Task Scheduler (0 = OK, 1 = failed) and the `logs\` folder.
 
 ## Failures
 
